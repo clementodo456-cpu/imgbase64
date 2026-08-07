@@ -1,0 +1,22 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Database & Storage
+*.db
+*.sqlite
+*.sqlite3
+temp_files/
+
+# Environment Variables
+.env
+
+# Render / System logs
+*.log
