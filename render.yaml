@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: imgbase64bot
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python bot.py"
+    plan: free
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: ADMIN_ID
+        sync: false
+      - key: DATABASE_PATH
+        value: bot.db
+      - key: MAX_FILE_SIZE_MB
+        value: 10
+      - key: PORT
+        value: 10000
+      - key: RENDER_EXTERNAL_URL
+        sync: false
