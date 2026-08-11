@@ -10,7 +10,6 @@ from contextlib import closing
 from datetime import datetime
 from typing import Optional, Tuple
 
-from aiohttp import web
 from dotenv import load_dotenv
 from PIL import Image, UnidentifiedImageError
 from telegram import (
@@ -37,10 +36,8 @@ ADMIN_ID = os.getenv("ADMIN_ID")
 DATABASE_PATH = os.getenv("DATABASE_PATH", "bot.db")
 MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "10"))
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
-PORT = int(os.getenv("PORT", "10000"))
-RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
 
-# Basic Logging setup
+# Logging setup
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -120,9 +117,11 @@ def get_admin_stats() -> dict:
         cursor.execute("SELECT COUNT(user_id) FROM users")
         total_users = cursor.fetchone()[0] or 0
 
-        cursor.execute("SELECT SUM(total_conversions), SUM(image_to_base64_count), SUM(base64_to_image_count) FROM users")
+        cursor.execute(
+            "SELECT SUM(total_conversions), SUM(image_to_base64_count), SUM(base64_to_image_count) FROM users"
+        )
         sums = cursor.fetchone()
-        
+
         return {
             "total_users": total_users,
             "total_conversions": sums[0] or 0,
@@ -131,7 +130,7 @@ def get_admin_stats() -> dict:
         }
 
 
-# Security and Utility Helper Functions
+# Helper Functions
 def check_rate_limit(user_id: int) -> bool:
     """Returns True if user is rate limited, False otherwise."""
     current_time = time.time()
@@ -182,7 +181,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(welcome_text, parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard())
     elif update.callback_query:
-        await update.callback_query.edit_message_text(welcome_text, parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard())
+        await update.callback_query.edit_message_text(
+            welcome_text, parse_mode=ParseMode.HTML, reply_markup=get_main_keyboard()
+        )
 
 
 async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -204,7 +205,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(help_text, parse_mode=ParseMode.HTML, reply_markup=get_cancel_keyboard())
     elif update.callback_query:
-        await update.callback_query.edit_message_text(help_text, parse_mode=ParseMode.HTML, reply_markup=get_cancel_keyboard())
+        await update.callback_query.edit_message_text(
+            help_text, parse_mode=ParseMode.HTML, reply_markup=get_cancel_keyboard()
+        )
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -279,7 +282,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tg_file = await context.bot.get_file(file_obj.file_id)
         image_bytes = await tg_file.download_as_bytearray()
 
-        # Validate with Pillow
         with Image.open(io.BytesIO(image_bytes)) as img:
             fmt = (img.format or "PNG").lower()
             mime_type = f"image/{fmt}"
@@ -289,7 +291,6 @@ async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         update_user_activity(user.id, "img2b64")
 
-        # Send text if under limit, else send .txt file
         if len(data_uri) <= 4000:
             await status_msg.edit_text(
                 f"✅ <b>Conversion Successful</b> ({mime_type})\n\n<code>{data_uri}</code>",
@@ -347,7 +348,6 @@ async def handle_text_base64(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await status_msg.edit_text(f"❌ Decoded image size exceeds the allowed limit of {MAX_FILE_SIZE_MB} MB.")
             return
 
-        # Inspect bytes with Pillow
         with Image.open(io.BytesIO(image_bytes)) as img:
             detected_format = (img.format or "PNG").lower()
 
@@ -372,9 +372,8 @@ async def handle_text_base64(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await status_msg.edit_text("❌ An internal error occurred while decoding your input.")
 
 
-# Webhook & Server Setup for Render Integration
-async def main():
-    """Initializes and runs the custom Webhook server using aiohttp and python-telegram-bot."""
+def main():
+    """Initializes and runs long polling for Background Worker mode."""
     init_db()
 
     if not BOT_TOKEN:
@@ -392,55 +391,11 @@ async def main():
     application.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_image))
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text_base64))
 
-    # Initialize Telegram Application
-    await application.initialize()
-    await application.start()
+    logger.info("Starting bot long polling...")
 
-    # Webhook path setup
-    webhook_path = f"/telegram/{BOT_TOKEN}"
-    if RENDER_EXTERNAL_URL:
-        webhook_url = f"{RENDER_EXTERNAL_URL}{webhook_path}"
-        await application.bot.set_webhook(url=webhook_url)
-        logger.info(f"Set Webhook URL to: {webhook_url}")
-
-    # Set up aiohttp server
-    app = web.Application()
-
-    # Health check endpoint
-    async def health_check(request):
-        return web.Response(text="OK", status=200)
-
-    # Webhook handler endpoint
-    async def telegram_webhook(request):
-        try:
-            data = await request.json()
-            update = Update.de_json(data, application.bot)
-            await application.process_update(update)
-            return web.Response(status=200)
-        except Exception as e:
-            logger.error(f"Webhook error: {e}", exc_info=True)
-            return web.Response(status=500)
-
-    app.router.add_get("/", health_check)
-    app.router.add_get("/health", health_check)
-    app.router.add_post(webhook_path, telegram_webhook)
-
-    # Start runner
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", PORT)
-    logger.info(f"Starting web server on port {PORT}...")
-    await site.start()
-
-    # Keep server running until process interrupted
-    try:
-        await asyncio.Event().wait()
-    finally:
-        await application.stop()
-        await application.shutdown()
-        await runner.cleanup()
+    # Clears any existing webhooks automatically and listens for updates
+    application.run_polling(drop_pending_updates=True)
 
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()
