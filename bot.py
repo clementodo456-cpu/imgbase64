@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import logging
@@ -374,6 +375,10 @@ async def handle_text_base64(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 def main():
     """Initializes and runs long polling for Background Worker mode."""
+    # Create and set a new event loop for Python 3.12+ compatibility
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     init_db()
 
     if not BOT_TOKEN:
